@@ -72,7 +72,7 @@ public class Sender
               }
           }
       }
-  }
+   }
   
 
    private class Receiver implements Runnable
@@ -131,14 +131,17 @@ public class Sender
       int window_size_N = Integer.parseInt(args[2]);
       int retransmission_timeout = Integer.parseInt(args[3]);
 
-      FileInputStream fileInputStream = new FileInputStream(new File(file_path));
+      File file = new File(file_path);
+      FileInputStream fileInputStream = new FileInputStream(file);
       int totalPackets = (int) Math.ceil((double) fileInputStream.available() / (PACKET_SIZE_BYTES - HEADER_SIZE_BYTES));
 
       byte[][] packets = new byte[totalPackets][PACKET_SIZE_BYTES];
 
       for (int i = 0; i < totalPackets; i++) {
          int start = i * (PACKET_SIZE_BYTES - HEADER_SIZE_BYTES);
-         int end = Math.min((i + 1) * (PACKET_SIZE_BYTES - HEADER_SIZE_BYTES), fileInputStream.available());
+         int end = (int) Math.min((i + 1) * (PACKET_SIZE_BYTES - HEADER_SIZE_BYTES), file.length());
+         
+         System.out.println("start: " + start + " end: " + end);
 
          // Create a byte array for the packet
          byte[] packetData = new byte[end - start];
@@ -153,6 +156,7 @@ public class Sender
       }
 
       Sender sender = new Sender(receiver_port, window_size_N, retransmission_timeout);
+      sender.sendPackets(totalPackets, packets);
    }
 
    private static void writeSequenceNumber(byte[] packetData, int sequenceNumber) {
@@ -165,6 +169,6 @@ public class Sender
       fileInputStream.skip(start);
 
       // Read packet data from the file
-      fileInputStream.read(packetData, 2, packetData.length);
+      fileInputStream.read(packetData, 0, packetData.length);
    }
 }

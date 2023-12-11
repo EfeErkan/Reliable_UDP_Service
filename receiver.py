@@ -73,7 +73,8 @@ while True:
 
     seqNo = int.from_bytes(packet[:HEADER_SIZE], byteorder="big")
     data_bytes = packet[HEADER_SIZE:PACKET_SIZE]
-    
+    print("Received data for seq:", seqNo, "Data size:", len(data_bytes))
+
     # Terminate program if seqNo is 0
     if seqNo == 0:
         end_time = time()

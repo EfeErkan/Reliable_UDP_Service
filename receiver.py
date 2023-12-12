@@ -14,6 +14,7 @@ REPORTFILE = "report.txt"
 
 
 def send_ACK(sock, addr, seqNumber):
+    print("Sending ACK for seq:", seqNumber)
     sock.sendto(seqNumber.to_bytes(HEADER_SIZE, byteorder="big"), addr)
 
 

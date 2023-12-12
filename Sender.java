@@ -8,7 +8,7 @@ import java.net.SocketException;
 
 public class Sender
 {
-	private final Object lock = new Object();
+	//private final Object lock = new Object();
 
 	private static final int NUM_OF_ARGS = 4;
 	private static final int PACKET_SIZE_BYTES = 1024;
@@ -42,7 +42,7 @@ public class Sender
 		try {
 			 if (nextSeqNum < base + window_size_N) {
 				  // Send the packet
-					InetAddress address = InetAddress.getByName("localhost");
+					InetAddress address = InetAddress.getByAddress(new byte[] { 127, 0, 0, 1 });
 					DatagramPacket packet = new DatagramPacket(data, data.length, address, receiver_port);
 					this.socket.send(packet);
 					System.out.println("Sent packet with sequence number " + nextSeqNum);
@@ -66,16 +66,28 @@ public class Sender
 				  sendPacket(data);
 				  i++;
 			}
-  
-			// Wait for acknowledgments for the sent packets
-			synchronized (lock) {
-				try {
-					lock.wait(retransmission_timeout);
-					// lock.notify();
-				} catch (InterruptedException e) {
-					e.printStackTrace();
+
+			int temp_base = base;
+
+			while (true)
+			{
+				if (temp_base < base) {
+					break;
 				}
 			}
+
+
+
+  
+			// Wait for acknowledgments for the sent packets
+			// synchronized (lock) {
+			// 	try {
+			// 		lock.wait(retransmission_timeout);
+			// 		// lock.notify();
+			// 	} catch (InterruptedException e) {
+			// 		e.printStackTrace();
+			// 	}
+			// }
 		}
 	}
   
@@ -84,9 +96,9 @@ public class Sender
 	{
 		private DatagramSocket socket;
 
-		private Receiver() throws SocketException
+		private Receiver(DatagramSocket socket) throws SocketException
 		{
-			this.socket = new DatagramSocket();
+			this.socket = socket;
 		}
 
 		@Override
@@ -95,17 +107,18 @@ public class Sender
 			System.out.println("Receiver started");
 			while (true)
 			{
-				byte[] buffer = new byte[HEADER_SIZE_BYTES];
+				byte[] buffer = new byte[1024];
 				DatagramPacket ackPacket = new DatagramPacket(buffer, buffer.length);
 				try {
 					this.socket.receive(ackPacket);
 				} catch (IOException e) {
-					// TODO Auto-generated catch block
 					e.printStackTrace();
 				}
-				System.out.println("Received acknowledgment packet");
-				String ackMessage = new String(ackPacket.getData(), 0, ackPacket.getLength());
-				int ackNum = Integer.parseInt(ackMessage.split(" ")[1]);
+				//System.out.println("Received acknowledgment packet");
+				
+				// Extract acknowledgment number
+				byte[] ackData = ackPacket.getData();
+				int ackNum = ((ackData[0] & 0xFF) << 8) | (ackData[1] & 0xFF);
 
 				// Handle acknowledgment
 				handleAck(ackNum);
@@ -117,11 +130,12 @@ public class Sender
 			if (ackNum >= base && ackNum < base + window_size_N) {
 				 // Move the window
 				base = ackNum + 1;
+				System.out.println("Moved window to " + base);
 
-				// If the window has moved, notify the sender
-				synchronized (lock) {
-					lock.notify();
-				}
+				// // If the window has moved, notify the sender
+				// synchronized (lock) {
+				// 	lock.notify();
+				// }
 			}
 	  }
 	}
@@ -148,7 +162,7 @@ public class Sender
 			int start = i * (PACKET_SIZE_BYTES - HEADER_SIZE_BYTES);
 			int end = (int) Math.min((i + 1) * (PACKET_SIZE_BYTES - HEADER_SIZE_BYTES), file.length());
 			
-			System.out.println("start: " + start + " end: " + end);
+			//System.out.println("start: " + start + " end: " + end);
 
 			// Create a byte array for the packet
 			byte[] packetData = new byte[end - start + HEADER_SIZE_BYTES];
@@ -163,7 +177,7 @@ public class Sender
 		}
 
 		Sender sender = new Sender(receiver_port, window_size_N, retransmission_timeout);
-      Receiver receiver = sender.new Receiver();
+      Receiver receiver = sender.new Receiver(sender.socket);
       Thread receiverThread = new Thread(receiver);
       receiverThread.start();  // Start the receiver thread
 

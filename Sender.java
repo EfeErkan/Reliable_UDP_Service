@@ -5,10 +5,13 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class Sender
 {
-	//private final Object lock = new Object();
+	private final Object lock = new Object();
+	private Timer timer = new Timer();
 
 	private static final int NUM_OF_ARGS = 4;
 	private static final int PACKET_SIZE_BYTES = 1024;
@@ -59,37 +62,66 @@ public class Sender
 	}
 
 	public void sendPackets(int totalPackets, byte[][] packets) {
-		for (int i = 0; i < totalPackets; ) {
+		while (base <= totalPackets) {
 			 // Send packets up to the window size
-			while (nextSeqNum < base + window_size_N && i < totalPackets) {
-				  byte[] data = packets[i];
+			while (nextSeqNum < base + window_size_N && nextSeqNum <= totalPackets) {
+				  byte[] data = packets[nextSeqNum - 1];
 				  sendPacket(data);
-				  i++;
 			}
 
-			int temp_base = base;
+			startRetransmissionTimer(totalPackets, packets);
 
-			while (true)
-			{
-				if (temp_base < base) {
-					break;
+			// Wait for acknowledgments for the sent packets
+			synchronized (lock) {
+				try {
+					lock.wait(retransmission_timeout);
+					// lock.notify();
+				} catch (InterruptedException e) {
+					e.printStackTrace();
 				}
 			}
 
-
-
-  
-			// Wait for acknowledgments for the sent packets
-			// synchronized (lock) {
-			// 	try {
-			// 		lock.wait(retransmission_timeout);
-			// 		// lock.notify();
-			// 	} catch (InterruptedException e) {
-			// 		e.printStackTrace();
-			// 	}
-			// }
+			stopRetransmissionTimer();
 		}
+
+		// Send a packet with sequence number 0 to indicate the end of the file
+		byte[] endPacketData = new byte[HEADER_SIZE_BYTES];
+		writeSequenceNumber(endPacketData, 0);
+		sendPacket(endPacketData);
 	}
+	
+	private void startRetransmissionTimer(int totalPackets, byte[][] packets) {
+		timer.schedule(new RetransmissionTask(totalPackets, packets), retransmission_timeout);
+  	}
+
+  private void stopRetransmissionTimer() {
+		timer.cancel();
+		// Create a new Timer for future use
+		timer = new Timer();
+  	}
+
+	private class RetransmissionTask extends TimerTask {
+		private final int totalPackets;
+      private final byte[][] packets;
+
+		public RetransmissionTask(int totalPackets, byte[][] packets) {
+			this.totalPackets = totalPackets;
+			this.packets = packets;
+	  	}
+      @Override
+      public void run() {
+         // Retransmit the entire window on timeout
+         synchronized (lock) {
+               System.out.println("Retransmitting entire window due to timeout");
+               for (int i = base; i < base + window_size_N; i++) {
+                  if (i <= totalPackets) {
+                     byte[] data = packets[i - 1];
+                     sendPacket(data);
+                  }
+               }
+         }
+      }
+    }
   
 
 	private class Receiver implements Runnable
@@ -126,16 +158,16 @@ public class Sender
 		}
 
 		private void handleAck(int ackNum) {
-			System.out.println("Received acknowledgment for packet with sequence number " + ackNum);
 			if (ackNum >= base && ackNum < base + window_size_N) {
+				System.out.println("Received acknowledgment for packet with sequence number " + ackNum);
 				 // Move the window
 				base = ackNum + 1;
 				System.out.println("Moved window to " + base);
 
 				// // If the window has moved, notify the sender
-				// synchronized (lock) {
-				// 	lock.notify();
-				// }
+				synchronized (lock) {
+					lock.notify();
+				}
 			}
 	  }
 	}
@@ -162,8 +194,6 @@ public class Sender
 			int start = i * (PACKET_SIZE_BYTES - HEADER_SIZE_BYTES);
 			int end = (int) Math.min((i + 1) * (PACKET_SIZE_BYTES - HEADER_SIZE_BYTES), file.length());
 			
-			//System.out.println("start: " + start + " end: " + end);
-
 			// Create a byte array for the packet
 			byte[] packetData = new byte[end - start + HEADER_SIZE_BYTES];
 
@@ -185,6 +215,9 @@ public class Sender
 
       // Wait for the receiver thread to finish
       receiverThread.join();
+
+		// Close the file input stream
+		fileInputStream.close();
 
 	}
 

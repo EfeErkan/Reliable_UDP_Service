@@ -23,6 +23,7 @@ public class Sender
 	private int retransmission_timeout;
 	private int base;
 	private int nextSeqNum;
+	private boolean retransmission;
 
 	public Sender(int receiver_port, int window_size_N, int retransmission_timeout)
 	{
@@ -34,6 +35,7 @@ public class Sender
 			this.retransmission_timeout = retransmission_timeout;
 			base = 1;
 			nextSeqNum = 1;
+			retransmission = false;
 		}
 		catch (Exception e)
 		{
@@ -64,12 +66,14 @@ public class Sender
 	public void sendPackets(int totalPackets, byte[][] packets) {
 		while (base <= totalPackets) {
 			 // Send packets up to the window size
+
 			while (nextSeqNum < base + window_size_N && nextSeqNum <= totalPackets) {
 				  byte[] data = packets[nextSeqNum - 1];
 				  sendPacket(data);
 			}
 
-			startRetransmissionTimer(totalPackets, packets);
+			//startRetransmissionTimer(totalPackets, packets);
+			long startTime = System.currentTimeMillis();
 
 			// Wait for acknowledgments for the sent packets
 			synchronized (lock) {
@@ -80,8 +84,14 @@ public class Sender
 					e.printStackTrace();
 				}
 			}
+			
+			long endTime = System.currentTimeMillis();
+			long elapsedTime = endTime - startTime;
 
-			stopRetransmissionTimer();
+			if (elapsedTime >= retransmission_timeout) {
+				System.out.println("Retransmitting entire window due to timeout");
+				nextSeqNum = base;
+			}
 		}
 
 		// Send a packet with sequence number 0 to indicate the end of the file
@@ -111,15 +121,9 @@ public class Sender
       @Override
       public void run() {
          // Retransmit the entire window on timeout
-         synchronized (lock) {
-               System.out.println("Retransmitting entire window due to timeout");
-               for (int i = base; i < base + window_size_N; i++) {
-                  if (i <= totalPackets) {
-                     byte[] data = packets[i - 1];
-                     sendPacket(data);
-                  }
-               }
-         }
+			System.out.println("Retransmitting entire window due to timeout");
+			retransmission = false;
+			//stopRetransmissionTimer();
       }
     }
   

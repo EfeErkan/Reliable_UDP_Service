@@ -5,13 +5,10 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
-import java.util.Timer;
-import java.util.TimerTask;
 
 public class Sender
 {
 	private final Object lock = new Object();
-	private Timer timer = new Timer();
 
 	private static final int NUM_OF_ARGS = 4;
 	private static final int PACKET_SIZE_BYTES = 1024;
@@ -23,63 +20,52 @@ public class Sender
 	private int retransmission_timeout;
 	private int base;
 	private int nextSeqNum;
-	private boolean retransmission;
+	private int retransmission_count;
 
-	public Sender(int receiver_port, int window_size_N, int retransmission_timeout)
+	public Sender(int receiver_port, int window_size_N, int retransmission_timeout) throws SocketException
 	{
-		try
-		{
-			this.socket = new DatagramSocket();
-			this.receiver_port = receiver_port;
-			this.window_size_N = window_size_N;
-			this.retransmission_timeout = retransmission_timeout;
-			base = 1;
-			nextSeqNum = 1;
-			retransmission = false;
-		}
-		catch (Exception e)
-		{
-			e.printStackTrace();
+		this.socket = new DatagramSocket();
+		this.receiver_port = receiver_port;
+		this.window_size_N = window_size_N;
+		this.retransmission_timeout = retransmission_timeout;
+		base = 1;
+		nextSeqNum = 1;
+		retransmission_count = 0;
+	}
+
+	private void sendPacket(byte[] data) throws IOException {
+		
+		if (nextSeqNum < base + window_size_N) {
+			// Send the packet
+			InetAddress address = InetAddress.getByAddress(new byte[] { 127, 0, 0, 1 });
+			DatagramPacket packet = new DatagramPacket(data, data.length, address, receiver_port);
+			this.socket.send(packet);
+			System.out.println("Sent packet with sequence number " + nextSeqNum + " base: " + base);
+
+			// Move to the next sequence number
+			nextSeqNum++;
+
+		} else {
+			System.out.println("Window is full. Waiting for acknowledgments...");
 		}
 	}
 
-	private void sendPacket(byte[] data) {
-		try {
-			 if (nextSeqNum < base + window_size_N) {
-				  // Send the packet
-					InetAddress address = InetAddress.getByAddress(new byte[] { 127, 0, 0, 1 });
-					DatagramPacket packet = new DatagramPacket(data, data.length, address, receiver_port);
-					this.socket.send(packet);
-					System.out.println("Sent packet with sequence number " + nextSeqNum);
-
-					// Move to the next sequence number
-					nextSeqNum++;
-
-			 } else {
-				  	System.out.println("Window is full. Waiting for acknowledgments...");
-			 }
-		} catch (IOException e) {
-				e.printStackTrace();
-		}
-	}
-
-	public void sendPackets(int totalPackets, byte[][] packets) {
+	public void sendPackets(int totalPackets, byte[][] packets) throws IOException {
 		while (base <= totalPackets) {
-			 // Send packets up to the window size
+			// Send packets up to the window size
+			long startTime = System.currentTimeMillis();
 
 			while (nextSeqNum < base + window_size_N && nextSeqNum <= totalPackets) {
 				  byte[] data = packets[nextSeqNum - 1];
 				  sendPacket(data);
 			}
 
-			//startRetransmissionTimer(totalPackets, packets);
-			long startTime = System.currentTimeMillis();
+			long middleTime = System.currentTimeMillis();
 
 			// Wait for acknowledgments for the sent packets
 			synchronized (lock) {
 				try {
-					lock.wait(retransmission_timeout);
-					// lock.notify();
+					lock.wait(retransmission_timeout - (middleTime - startTime));
 				} catch (InterruptedException e) {
 					e.printStackTrace();
 				}
@@ -90,6 +76,7 @@ public class Sender
 
 			if (elapsedTime >= retransmission_timeout) {
 				System.out.println("Retransmitting entire window due to timeout");
+				retransmission_count++;
 				nextSeqNum = base;
 			}
 		}
@@ -100,61 +87,38 @@ public class Sender
 		sendPacket(endPacketData);
 	}
 	
-	private void startRetransmissionTimer(int totalPackets, byte[][] packets) {
-		timer.schedule(new RetransmissionTask(totalPackets, packets), retransmission_timeout);
-  	}
-
-  private void stopRetransmissionTimer() {
-		timer.cancel();
-		// Create a new Timer for future use
-		timer = new Timer();
-  	}
-
-	private class RetransmissionTask extends TimerTask {
-		private final int totalPackets;
-      private final byte[][] packets;
-
-		public RetransmissionTask(int totalPackets, byte[][] packets) {
-			this.totalPackets = totalPackets;
-			this.packets = packets;
-	  	}
-      @Override
-      public void run() {
-         // Retransmit the entire window on timeout
-			System.out.println("Retransmitting entire window due to timeout");
-			retransmission = false;
-			//stopRetransmissionTimer();
-      }
-    }
-  
-
 	private class Receiver implements Runnable
 	{
 		private DatagramSocket socket;
+		private int totalPackets;
+		private boolean stop;
 
-		private Receiver(DatagramSocket socket) throws SocketException
+		private Receiver(DatagramSocket socket, int totalPackets) throws SocketException
 		{
 			this.socket = socket;
+			this.totalPackets = totalPackets;
+			this.stop = false;
 		}
 
 		@Override
 		public void run()
 		{
 			System.out.println("Receiver started");
-			while (true)
+			while (!stop)
 			{
 				byte[] buffer = new byte[1024];
 				DatagramPacket ackPacket = new DatagramPacket(buffer, buffer.length);
 				try {
 					this.socket.receive(ackPacket);
+					
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
-				//System.out.println("Received acknowledgment packet");
 				
 				// Extract acknowledgment number
 				byte[] ackData = ackPacket.getData();
 				int ackNum = ((ackData[0] & 0xFF) << 8) | (ackData[1] & 0xFF);
+				System.out.println("Acknum " + ackNum);
 
 				// Handle acknowledgment
 				handleAck(ackNum);
@@ -162,7 +126,7 @@ public class Sender
 		}
 
 		private void handleAck(int ackNum) {
-			if (ackNum >= base && ackNum < base + window_size_N) {
+			if (ackNum >= base) {
 				System.out.println("Received acknowledgment for packet with sequence number " + ackNum);
 				 // Move the window
 				base = ackNum + 1;
@@ -171,6 +135,10 @@ public class Sender
 				// // If the window has moved, notify the sender
 				synchronized (lock) {
 					lock.notify();
+				}
+
+				if (base > totalPackets) {
+					stop = true;
 				}
 			}
 	  }
@@ -211,7 +179,7 @@ public class Sender
 		}
 
 		Sender sender = new Sender(receiver_port, window_size_N, retransmission_timeout);
-      Receiver receiver = sender.new Receiver(sender.socket);
+      Receiver receiver = sender.new Receiver(sender.socket, totalPackets);
       Thread receiverThread = new Thread(receiver);
       receiverThread.start();  // Start the receiver thread
 
@@ -223,6 +191,7 @@ public class Sender
 		// Close the file input stream
 		fileInputStream.close();
 
+		System.out.println("Retransmission count: " + sender.retransmission_count);
 	}
 
 	private static void writeSequenceNumber(byte[] packetData, int sequenceNumber) {
